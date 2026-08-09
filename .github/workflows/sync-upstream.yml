@@ -1,0 +1,39 @@
+name: Sync Upstream
+
+# 定时从上游 hawkli-1994/deerflow-book 同步到本 fork，保持仓库与上游一致。
+# 同步在 GitHub 服务器上执行，不依赖本地电脑；推送 main 会顺带触发 Pages 部署。
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 每天 03:00 UTC（北京时间 11:00）
+  workflow_dispatch:      # 也可以在 Actions 页面手动触发
+
+permissions:
+  contents: write
+
+# 同一时间只跑一个同步任务，避免并发冲突
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync from hawkli-1994/deerflow-book
+        run: |
+          git remote add upstream https://github.com/hawkli-1994/deerflow-book.git
+          git fetch upstream main
+          # 已是最新则直接结束，不产生任何提交
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "== 已是最新，无需同步 =="
+            exit 0
+          fi
+          # 优先快进合并；若本 fork 上有自己的提交（历史分叉），则创建合并提交
+          git merge --ff-only upstream/main || git merge --no-edit upstream/main
+          git push origin main
