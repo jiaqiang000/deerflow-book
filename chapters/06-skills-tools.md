@@ -40,6 +40,9 @@ DeerFlow 中 **Skill** 和 **Tool** 是两个不同层次的概念：
 
 ## 6.2 内置 Tools
 
+> ⚠️ **本节说明已过时**：6.2 的内容基于旧版实现，工具名称与分类和当前代码不一致。
+> 工具系统的完整、最新说明请跳转查看 **第五章 5.6 工具系统（Tools）**：[[05-agent-core#5.6 工具系统（Tools）]]
+
 DeerFlow 内置以下工具：
 
 ### 6.2.1 Sandbox Tools
@@ -596,7 +599,7 @@ def read_history(name: str) -> list[dict[str, Any]]:
             continue
         records.append(json.loads(line))
     return records
-```python
+```
 
 ### 6.6.4 Skill 目录管理
 
@@ -664,7 +667,7 @@ def ensure_safe_support_path(name: str, relative_path: str) -> Path:
         raise ValueError("Supporting file path must stay within the selected support directory.") from exc
     
     return target
-```python
+```
 
 ### 6.6.6 Skill 名称规范
 
