@@ -1,15 +1,15 @@
 # 第二章 · 核心概念与设计哲学
-
-
 > **本章目标**：
+> 
 > 1. 深入理解 DeerFlow 的「解耦」设计哲学
 > 2. 掌握 Skill、Sub-Agent、Sandbox、Memory 四大核心概念的区别与联系
 > 3. 了解 LangGraph 在 DeerFlow 中的编排角色
 
 > **本章目标**：
-> 1. 掌握 Skill、Tool、Agent、Sandbox、Memory 五大核心概念
-> 2. 理解 DeerFlow 的状态图工作流模型
-> 3. 建立 DeerFlow 与 LangGraph 的关系认知
+> 
+> 4. 掌握 Skill、Tool、Agent、Sandbox、Memory 五大核心概念
+> 5. 理解 DeerFlow 的状态图工作流模型
+> 6. 建立 DeerFlow 与 LangGraph 的关系认知
 
 ## 2.1 设计哲学：解耦与可扩展
 
@@ -93,6 +93,7 @@ async def run_subagent():
 ```
 
 **子代理类型：**
+
 | 类型 | 用途 |
 |------|------|
 | `lead_agent` | 主控 Agent |
@@ -210,7 +211,7 @@ DeerFlow 2.0 的核心改变：完全基于 LangGraph 重写。
 **为什么选择 LangGraph：**
 
 1. **图的表达能力**：Agent 流程天然适合用图来表达
-2. **状态管理**：内置 Checkpointing，支持回溯
+2. **状态管理**：内置 Checkpointing，支持回溯[[chapter6#6.3.1 超步骤（Super-step）与节点活跃状态]]
 3. **可观测性**：与 LangSmith 无缝集成
 4. **生态丰富**：LangChain 工具链直接可用
 
