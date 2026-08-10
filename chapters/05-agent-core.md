@@ -28,6 +28,21 @@ agent = make_lead_agent(config)
 3. 系统 Prompt 生成（包含 skills、memory、subagent 指令）
 4. 中间件链组装
 
+---
+
+📌 勘误：关于"工具加载"的分类
+
+此处"Sandbox + Builtin + MCP + Community + Subagent"是按用途分的 5 类。当前代码（get_available_tools()，tools/tools.py）实际按加载机制分 4 类：
+
+- Sandbox + Community → 配置驱动类（config.yaml 的 tools: 段，动态 import）
+- Builtin + Subagent → 代码内置类（tools/builtins/，硬编码 + 条件追加）
+- MCP → MCP 类（extensions_config.json 的 mcpServers）
+- —（文档未提及） → ACP 类（config.yaml 的 acp_agents）
+
+详见 5.6.1 的勘误说明。
+
+---
+
 ## 5.2 ThreadState：Agent 状态定义
 
 ```python
@@ -583,7 +598,29 @@ get_available_tools()
        └── 5. Subagent Tools (task delegation)
 ```
 
+
+> 上图是简化视角，真实加载只有 4 个来源，且**沙箱与社区走同一条路**：
+>
+> ```
+> get_available_tools() = 配置工具 + 内置工具 + MCP 工具 + ACP 工具
+>   ├─ 配置工具：config.yaml tools: 段 → resolve_variable("模块:变量")
+>   │    └─ 同时装载：沙箱（ls/read_file/glob/grep/write_file/str_replace/bash）
+>   │                 社区（web_search/web_fetch/image_search …）
+>   ├─ 内置工具：BUILTIN_TOOLS + 条件追加
+>   │    └─ present_files / ask_clarification / review_skill_package
+>   │       （+ view_image 仅 vision 模型；task 仅 subagent_enabled 等）
+>   ├─ MCP 工具：启动时 initialize_mcp_tools() 缓存
+>   └─ ACP 工具：config.acp_agents
+> 之后：按 name 去重 → 授权过滤 → tool_search 延迟化 → create_agent 绑定
+> ```
+>
+> 原文两处笔误：① 沙箱工具名应为 `read_file`/`write_file`（非 read/write），且漏了 `glob`、`grep`；② "Community Tools (tavily, jina_ai, firecrawl…)" 列的是**包名**，工具对外名是 `web_search`、`web_fetch` 等。
+
 ### 5.6.2 工具注册表
+
+> 本节为旧文档遗留，代码中不存在 `ToolRegistry` 类。
+> DeerFlow 的工具就是 `list[BaseTool]`，加载后按 `name` 去重（tools/tools.py），
+> 无注册表机制。请以 5.6.1 勘误框中的流程为准。
 
 ```python
 class ToolRegistry:
