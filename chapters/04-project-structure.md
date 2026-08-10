@@ -36,11 +36,14 @@ deer-flow/
 │
 ├── backend/                         # 后端工程
 │   ├── app/
-│   │   ├── gateway/                 # FastAPI Gateway
+│   │   ├── gateway/                 # FastAPI Gateway（接口层：HTTP 协议、鉴权、路由）
+│   │   │   ├── app.py               # create_app()：组装并挂载所有路由
+│   │   │   ├── services.py          # start_run / sse_consumer 等业务服务
+│   │   │   └── routers/             # HTTP 路由文件（24 个：models.py、skills.py、thread_runs.py …）
 │   │   └── channels/                # IM 渠道集成
 │   ├── packages/
 │   │   └── harness/
-│   │       └── deerflow/            # DeerFlow Python 核心包
+│   │       └── deerflow/            # DeerFlow Python 核心包（领域逻辑层，被 gateway 单向调用）
 │   │           ├── agents/          # Lead Agent、状态、记忆与中间件
 │   │           ├── subagents/       # 子代理注册与执行
 │   │           ├── tools/           # 内置工具与工具搜索
@@ -72,6 +75,25 @@ deer-flow/
 └── skills/                          # Agent Skills
     └── public/                      # 内置公共 Skills
 ```
+
+> **💡 gateway（app/）与 harness（deerflow/）是什么关系**
+>
+> 一句话规律：**app/ 是 HTTP 薄外壳，deerflow/ 是真正干活的人**。gateway 里每个文件，业务逻辑都是从 `deerflow.*` import 进来的，自己只写协议、鉴权、状态码。对照几个典型文件：
+>
+> | gateway 里的文件 | 它内部实际调用的 harness 代码 | 文件自己的职责 |
+> |---|---|---|
+> | `routers/skills.py` | `deerflow.skills.storage`、`installer`、`security_scanner`、`config.extensions_config` | 把技能操作翻译成 HTTP |
+> | `routers/uploads.py` | `deerflow.uploads.manager`、`sandbox.sandbox_provider` | 上传协议与校验 |
+> | `routers/models.py` | `deerflow.config.app_config`、`authz.provider` | 读配置 + 鉴权 |
+> | `routers/mcp.py` | `deerflow.mcp.cache`、`config.extensions_config` | MCP 配置管理 |
+> | `routers/thread_runs.py` + `services.py` | `deerflow.runtime.*`（run_agent、RunManager、checkpoint_mode…） | run 生命周期编排 |
+> | `deps.py` | `deerflow.runtime`（checkpointer / store / stream bridge） | 启动时装配运行时单例 |
+> | `channels/` | `deerflow.runtime`、`deerflow.persistence` | IM 渠道协议转换 |
+> | `app.py` | `deerflow.extensions`、`deerflow.config` | FastAPI 生命周期 |
+>
+> 例：`routers/skills.py` 的 `GET /api/skills` 端点，核心代码就一行 `storage.load_skills(...)`——storage 来自 `deerflow.skills.storage`。技能怎么存、怎么扫描、怎么装，harness 说了算；`skills.py` 只负责把它变成 HTTP 接口。
+>
+> 依赖方向强制单向：`app → deerflow`。harness 禁止 import app（`test_harness_boundary.py` 把关），所以它可以脱离 HTTP 独立复用（LangGraph Server、SDK、子代理都直接用它）。
 
 ## 4.2 核心模块详解
 

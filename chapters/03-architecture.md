@@ -296,6 +296,68 @@ Nginx (2026)
     └─→ /* → Frontend (Static)
 ```
 
+> **🔎 用真实代码走一遍这张图**
+>
+>
+> ## 一、改造后的图（每个框 = 真实代码）
+>
+> ```text
+> 用户在浏览器聊天框输入消息
+>     │  前端聊天组件 → POST /api/threads/{id}/runs/stream
+>     ▼
+> Nginx (2026)
+>     │  location /api/langgraph/ { rewrite ^/api/langgraph/(.*) /api/$1 break; }   ← nginx.conf:80
+>     ▼
+> Gateway API (8001) — FastAPI 内嵌 LangGraph 运行时（没有独立 2024 进程）
+>     │
+>     ├─ stream_run(thread_runs.py:846)  POST /{thread_id}/runs/stream
+>     │     ├─ start_run(services.py:1050)   ← 建 RunRecord、校验线程权限
+>     │     │     ├─ resolve_agent_factory(services.py:1128) → make_lead_agent
+>     │     │     ├─ build_run_config(services.py:536)       ← thread_id/agent_name/递归上限
+>     │     │     └─ 后台启动 run_agent worker
+>     │     ├─ run_agent(worker.py:534)     ← 真正的"Agent Runtime"
+>     │     │     ├─ _build_runtime_context(worker.py:367)   ← 模拟 CLI 的 context 注入
+>     │     │     ├─ agent = agent_factory(config)           ← make_lead_agent(agent.py:640)
+>     │     │     │     └─ _make_lead_agent(agent.py:671)
+>     │     │     │           ├─ create_chat_model(...)      ← Model (LLM)
+>     │     │     │           ├─ get_available_tools(...)    ← Tools (tools.py)
+>     │     │     │           ├─ build_middlewares(...)      ← Middleware Chain (agent.py:373)
+>     │     │     │           └─ apply_prompt_template(...)  ← System Prompt (含 skills)
+>     │     │     └─ agent.astream(...)     ← 图执行，每步 bridge.publish 事件
+>     │     └─ sse_consumer(services.py:1325) ← 从 bridge 订阅 → format_sse → SSE 回前端
+>     ▼
+> 前端 EventSource 收到 message/tool_call/end 事件并渲染
+> ```
+>
+> ## 二、例子 1：用户发"帮我看看当前目录里有什么文件"
+>
+> 1. **前端**发 `POST /api/threads/{thread_id}/runs/stream`（浏览器里走 nginx 2026）
+> 2. **Nginx** `nginx.conf:80-81`：`/api/langgraph/*` → 重写为 `/api/*` → 代理到 Gateway 8001
+> 3. **Gateway 路由** `thread_runs.py:846 stream_run`：调用 `start_run` 后立刻返回 `StreamingResponse(media_type="text/event-stream")`，把 HTTP 连接挂起
+> 4. **start_run** `services.py:1050`：校验 `thread_id`、模型白名单、线程归属权限（`check_access`），然后 `resolve_agent_factory` 拿到 `make_lead_agent`，后台启动 worker——**请求在路由器就返回了，agent 在后台跑**
+> 5. **run_agent** `worker.py:534`：
+>    - 注入运行时上下文（thread_id/run_id/app_config，`worker.py:367`）
+>    - `agent = make_lead_agent(config)` → 现场构建图：解析模型 → 组装工具 → 装配中间件链 → 生成系统提示词
+>    - `agent.astream(...)` 开始执行，每个输出事件 `bridge.publish(run_id, "messages", chunk)`
+> 6. **sse_consumer** `services.py:1325`：`bridge.subscribe(run_id)` 拿到事件，`format_sse` 转成 `event: messages\ndata: {...}` 帧推给浏览器
+> 7. 前端收到事件流，逐条渲染。如果中途**关掉页面**：`sse_consumer` 的 `finally` 块（services.py:1376-1382）按 `on_disconnect` 决定取消任务（`run_mgr.cancel`）还是让它跑完
+>
+> ## 三、例子 2：模型决定调用沙箱里的 bash 工具
+>
+> 当模型在图执行中说"我要调用 `bash` 工具"（例如列目录）：
+>
+> - **中间件链**先拦一道：20+ 个中间件按 `build_middlewares`（agent.py:373）的装配顺序执行——`SandboxMiddleware`（`sandbox/middleware.py`，懒初始化：默认 `lazy_init=True`，**第一次工具调用才获取沙箱**，同一 thread 复用，应用关闭才释放）
+> - **工具清单**由 `get_available_tools`（tools.py）按 `config.yaml` 决定：测试 `test_local_bash_tool_loading.py` 里就有"默认 local sandbox 隐藏 bash、AIO 沙箱保留 bash"的行为；`subagent_enabled=True` 时还会加 `task`/`task_status`
+> - 工具执行结果写回状态 → 模型继续下一轮，直到输出最终答案
+>
+> ## 四、例子 3：用户输入 `/skill-name`（渐进式 Skill 加载的真实落点）
+>
+> 图里那句"Progressive Skill Loading（按需加载）"其实拆成三个真实机制：
+>
+> 1. **包根懒加载**：`deerflow.agents` 的 `__getattr__`（agents/__init__.py:15）只在 LangGraph 解析 `deerflow.agents:make_lead_agent` 时才 import 整棵工具图并预热 skills 缓存——**进程启动时不拉全量**
+> 2. **SkillActivationMiddleware**（agent.py:390 处装配）：用户消息以 `/skill-name` 开头时，确定性加载完整 SKILL.md
+> 3. **SkillToolPolicyMiddleware**（agent.py:399 处）：技能激活后，运行时才把该技能允许的工具暴露给模型
+
 ## 3.7 中间件链详解
 
 中间件是 DeerFlow 的请求处理链，每个中间件负责特定功能。DeerFlow 2.0 共包含 **18 个中间件**（详见第五章 5.5.1 节），按职责分为两大类：
