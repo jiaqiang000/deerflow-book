@@ -25,6 +25,11 @@ tags:
 ---
 
 ## 各种配置
+[[03-architecture#3.8 配置体系]]
+
+[[04-project-structure#4.5 配置体系]]
+
+[[05-agent-core#5.3 运行时配置（configurable）]]
 
 ## 易混复杂重点知识
 [[03-architecture#3.6 请求处理流程]]
