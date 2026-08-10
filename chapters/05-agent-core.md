@@ -12,7 +12,7 @@
 > 3. 了解 Client SDK 的使用与 Agent 缓存机制
 
 ## 5.1 核心入口：make_lead_agent
-
+在全局中的位置：[[03-architecture#3.6 请求处理流程]]
 DeerFlow 的 Agent 核心入口是一个工厂函数：
 
 ```python
@@ -615,6 +615,26 @@ get_available_tools()
 > ```
 >
 > 原文两处笔误：① 沙箱工具名应为 `read_file`/`write_file`（非 read/write），且漏了 `glob`、`grep`；② "Community Tools (tavily, jina_ai, firecrawl…)" 列的是**包名**，工具对外名是 `web_search`、`web_fetch` 等。
+
+> **补充：MCP 工具的完整链路（配置 → 连接 → 缓存 → 取用）**
+>
+> 上图"3. MCP Tools（从配置的 MCP Server 加载）"分两个层面，容易混淆：
+>
+> - **你配置的是"服务器"，不是"工具"**：在 `extensions_config.json` 的 `mcpServers` 段添加的是服务器条目（command / args / env，即"怎么启动它"）。你写不出它的工具——工具长什么样，要连上服务器才知道。
+> - **工具是连接后动态发现的**，流程如下：
+>
+> ```
+> ① 配置：extensions_config.json → mcpServers 段添加服务器条目
+> ② 启动或首次调用：initialize_mcp_tools()（deerflow/mcp/cache.py）
+>    逐个连接启用的服务器，询问 tools/list
+> ③ 发现：服务器返回它提供的工具（如 github_get_issue、github_create_issue …）
+> ④ 缓存：工具存入内存缓存
+> ⑤ 取用：get_available_tools() 组装时调 get_cached_mcp_tools()
+>    从缓存取出；若配置有变（缓存过期）或尚未初始化，会自动重新初始化
+> ```
+>
+> **对比沙箱/社区工具**：它们的 `use: 模块:变量` 直接指向本地代码函数，import 即得工具；
+> MCP 工具指向**外部服务器**，必须"连接 → 询问"才能拿到工具，缓存只是避免每次重复连接。
 
 ### 5.6.2 工具注册表
 
