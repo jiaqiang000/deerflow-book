@@ -223,6 +223,133 @@ class SkillRegistry:
 
 ## 6.4 渐进式 Skill 加载（Progressive Skill Loading）
 
+> DeerFlow 渐进式加载体系
+> │
+> ├─ 1. MCP 工具层
+> │   │
+> │   ├─ 第一步：发现工具（无论是否开启延迟，都会执行）
+> │   │   ├─ 只连接 enabled=true 的 MCP server
+> │   │   │     —— server 写进配置但没写 enabled 时，默认启用
+> │   │   └─ 从这些 server 发现、创建并缓存全部 MCP 工具
+> │   │         —— tool_search 不会延迟连接 server 和发现工具
+> │   │
+> │   ├─ 模式 A：tool_search.enabled=false【默认】
+> │   │   └─ 全部幸存 MCP 工具的完整 schema 直接交给模型
+> │   │         —— 如果成功发现 500 个，通常就是 500 份 schema
+> │   │         —— 但仍可能经过名称校验、去重和全局授权过滤
+> │   │
+> │   └─ 模式 B：tool_search.enabled=true【手动开启】
+> │       ├─ 500 个工具仍然全部被发现、创建和缓存
+> │       ├─ 系统提示词只列出 500 个工具名称
+> │       ├─ 完整 schema 暂时对模型隐藏
+> │       ├─ 晋升方式 ①：AI 调 tool_search，按需取得 schema
+> │       ├─ 晋升方式 ②：routing 关键词命中后自动晋升
+> │       │     —— routing.mode 默认 off
+> │       │     —— 开启后默认最多自动晋升 3 个
+> │       └─ 未晋升工具即使被模型猜到名字，也会被拦截
+> │
+> ├─ 2. Skill 层
+> │   │
+> │   ├─ 第一步：扫描 Skill（无论是否开启延迟，都会执行）
+> │   │   ├─ 扫描磁盘上的全部 SKILL.md
+> │   │   ├─ 读取文件并解析 frontmatter 元数据
+> │   │   │     —— name / description / allowed-tools / 路径等
+> │   │   └─ 合并 enabled 状态和 agent 白名单
+> │   │         —— 没有显式状态记录的 Skill 默认启用
+> │   │
+> │   ├─ 模式 A：skills.deferred_discovery=false【默认】
+> │   │   ├─ 所有 enabled Skill 的完整元数据进入提示词
+> │   │   │     —— 名称 + 描述 + 分类 + SKILL.md 路径
+> │   │   ├─ 200 个 enabled Skill = 200 条元数据进入提示词
+> │   │   └─ 但 200 份 SKILL.md 正文不会全部进入上下文
+> │   │         —— AI 选中某个 Skill 后，才 read_file 读取正文
+> │   │
+> │   └─ 模式 B：skills.deferred_discovery=true【手动开启】
+> │       ├─ 200 个 Skill 仍然全部被扫描和解析
+> │       ├─ 系统提示词只列出 200 个 Skill 名称
+> │       ├─ AI 调 describe_skill，按需取得某个 Skill 的元数据
+> │       └─ AI 再调 read_file，加载选中 Skill 的完整正文
+> │
+> ├─ 3. Skill 完整正文的两条加载路径
+> │   │
+> │   ├─ 普通按需路径
+> │   │   ├─ legacy：看到元数据 → read_file
+> │   │   └─ deferred：看到名称 → describe_skill → read_file
+> │   │
+> │   └─ slash 路径
+> │       └─ 用户输入 /skill-name
+> │             → runtime 直接注入该 Skill 的完整正文
+> │             → 不需要再 describe_skill 或 read_file 主文件
+> │
+> ├─ 4. Skill 工具权限策略的启动【独立于延迟加载】
+> │   │
+> │   ├─ 作用
+> │   │   └─ 不负责发现或加载 Skill
+> │   │         —— 只判断当前应该采用哪个 Skill 的工具权限规则
+> │   │
+> │   ├─ 与加载流程的连接位置
+> │   │   └─ Skill 完整正文已经被加载
+> │   │         ├─ slash 路径：runtime 直接注入 SKILL.md
+> │   │         └─ 普通路径：read_file 成功读取 SKILL.md
+> │   │               ↓
+> │   │           系统记录当前正在使用的 Skill
+> │   │               ↓
+> │   │           启动该 Skill 的工具权限判断
+> │   │
+> │   ├─ slash 权限来源
+> │   │   └─ 用户通过 /skill-name 使用 Skill
+> │   │         —— 当前 run 中优先级最高
+> │   │         —— 后续再读取其他 Skill，也不能扩大当前权限
+> │   │
+> │   ├─ skill_context 权限来源
+> │   │   └─ AI 通过 read_file 成功读取合法 SKILL.md 后被系统记录
+> │   │         —— 可以同时记录多个 Skill
+> │   │         —— 多个 Skill 的显式 allowed-tools 会合并计算
+> │   │
+> │   └─ passive：没有权限策略来源
+> │       └─ 没有 slash Skill，也没有读取任何 SKILL.md
+> │             —— 权限中间件不限制工具
+> │             —— 现有工具保持原来的可见性和可调用性
+> │
+> ├─ 5. 权限启动后的工具授权与执行过滤【独立权限机制】
+> │   │
+> │   ├─ 当前 Skill 没有声明 allowed-tools
+> │   │   └─ 兼容旧行为，不限制已有工具
+> │   │         —— 加载 Skill 不等于一定会缩小工具范围
+> │   │
+> │   ├─ 当前 Skill 显式声明 allowed-tools
+> │   │   └─ allowed =
+> │   │         Skill 声明的工具
+> │   │         + 4 个框架基础工具：
+> │   │           read_file
+> │   │           describe_skill
+> │   │           tool_search
+> │   │           review_skill_package
+> │   │
+> │   ├─ 授权结果在三个位置生效
+> │   │   ├─ 模型调用前
+> │   │   │     —— 隐藏不允许的工具 schema，模型看不到
+> │   │   ├─ 工具执行前
+> │   │   │     —— 拦截不允许的工具调用
+> │   │   └─ tool_search 返回后
+> │   │         —— 删除不允许晋升的 MCP 工具 schema
+> │   │
+> │   └─ 与渐进式加载的关系
+> │       ├─ 渐进式加载决定：
+> │       │     名称、元数据、正文和 schema 什么时候进入模型
+> │       └─ 工具权限决定：
+> │             Skill 加载完成后，哪些工具允许被模型使用
+> │
+> └─ 6. 大规模场景一句话总结
+>     │
+>     ├─ 500 个 MCP 工具
+>     │   ├─ 默认：发现并缓存 500 个 + 500 份完整 schema 给模型
+>     │   └─ 延迟：发现并缓存 500 个 + 只列名称 + schema 按需晋升
+>     │
+>     └─ 200 个 Skill
+>         ├─ 默认：扫描 200 个 + 200 条元数据给模型 + 正文按需读取
+>         └─ 延迟：扫描 200 个 + 只列名称 + 元数据和正文分两步按需读取
+
 > **💡 最佳实践**：渐进式加载不是「按需」的同义词。设计 Skill 触发规则时，应确保规则覆盖率高（避免该加载时没加载），同时误触发率低（避免不该加载时加载了）。
 
 DeerFlow 2.0 引入的**渐进式 Skill 加载**是上下文管理的重要优化：

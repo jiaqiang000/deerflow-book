@@ -513,6 +513,7 @@ class ClarificationMiddleware:
 ```python
 class ToolErrorHandlingMiddleware(AgentMiddleware[AgentState]):
     """Convert tool exceptions into error ToolMessages so the run can continue."""
+    # 中文:将工具异常转换为错误 ToolMessage,让运行可以继续。
 
     def wrap_tool_call(
         self,
@@ -540,6 +541,7 @@ class ToolErrorHandlingMiddleware(AgentMiddleware[AgentState]):
 ```python
 class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
     """Detects and breaks repetitive tool call loops.
+    中文:检测并打断重复的工具调用循环。
 
     Args:
         warn_threshold: 重复次数达到此值时注入警告。默认: 3。
@@ -567,6 +569,7 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
 ```python
 class TokenUsageMiddleware(AgentMiddleware):
     """Logs token usage from model response usage_metadata."""
+    # 中文:记录模型响应的 token 使用量(取自 usage_metadata)。
 
     def _log_usage(self, state: AgentState) -> None:
         messages = state.get("messages", [])
@@ -593,6 +596,7 @@ class TokenUsageMiddleware(AgentMiddleware):
 ```python
 class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
     """Remove deferred tools from request.tools before model binding.
+    中文:在模型绑定前,从 request.tools 中移除延迟加载的工具。
 
     ToolNode still holds all tools (including deferred) for execution routing,
     but the LLM only sees active tool schemas — deferred tools are discoverable
@@ -621,6 +625,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
 ```python
 class SandboxAuditMiddleware(AgentMiddleware[ThreadState]):
     """Bash command security auditing middleware.
+    中文:Bash 命令安全审计中间件。
 
     1. Command classification: regex + shlex 分析命令风险等级
     2. Audit log: 每个 bash 调用记录为结构化 JSON
@@ -647,6 +652,7 @@ class SandboxAuditMiddleware(AgentMiddleware[ThreadState]):
 ```python
 class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
     """Retry transient LLM errors and surface graceful assistant messages.
+    中文:重试临时性 LLM 错误,并呈现友好的助手消息。
 
     可重试错误：APITimeoutError, APIConnectionError, InternalServerError,
     状态码 408/409/425/429/500/502/503/504, 服务繁忙提示等
@@ -969,6 +975,36 @@ client.get_artifact(thread_id, "mnt/user-data/outputs/result.txt")
 
 > **🏢 企业级建议**：自定义 Agent 工厂时，建议保留原始 `make_lead_agent` 的调用链作为 fallback，并通过特性开关（feature flag）控制新旧 Agent 的切换，降低上线风险。
 
+> 📌 **这句话的白话解读**（结合 DeerFlow 真实代码）：
+>
+> **一句话版本**：新工厂写好了先别急着替换，把老的 `make_lead_agent` 留着当备胎；用一个开关决定今天跑哪个；出问题就把开关拨回去，秒级回滚，不用重新发版。
+>
+> **逐词拆解**：
+>
+> | 词 | 意思 |
+> |---|---|
+> | 自定义 Agent 工厂 | 按 5.9.3 自己写一个 `make_custom_agent()`（换了编排方式、加了企业中间件），和 `make_lead_agent` 一样输入 config、输出编译好的图 |
+> | 保留原始调用链作为 fallback | 新工厂上线后，旧的 `make_lead_agent` 调用链一条都不要删——它是"备胎"，新工厂出问题随时切回去 |
+> | 特性开关（feature flag） | 配置文件里加一个开关，如 `agent_factory: "new"` / `"legacy"`，代码读开关决定调哪个工厂 |
+> | 降低上线风险 | 新工厂先灰度（小流量试），出问题拨开关秒回滚——不用发版、不用改代码、不影响线上 |
+>
+> 伪代码示意：
+>
+> ```python
+> def resolve_agent_factory():
+>     if config.agent_factory == "custom":   # 特性开关
+>         return make_custom_agent           # 新工厂（实验性）
+>     return make_lead_agent                 # fallback：默认老工厂，永远保留
+> ```
+>
+> **DeerFlow 自己就是这么做的（证据）**：
+>
+> ① worker 里有真实的"调用链回退"逻辑（`runtime/runs/worker.py`）：检查工厂签名认不认识 `app_config` 这个新参数，不认识就走旧调用方式传参；配套 `test_run_worker_rollback.py` 测试钉死回滚行为——工厂升级了参数，老工厂/老调用方式依然能跑。
+>
+> ② `resolve_agent_factory`（`app/gateway/services.py`）展示了更保守的默认设计：DeerFlow 里自定义 agent 根本不换工厂，全部复用同一个 `make_lead_agent`，只通过 `agent_name` 参数区分——"工厂永远只有一个、路由在工厂内部"，比 5.9 的建议还要稳。
+>
+> **完整图景**：这句话是在教你——换引擎可以，但别把旧引擎扔了；装个换挡杆（开关），随时能切回旧引擎。而 DeerFlow 的实际工程选择是——默认连引擎都不换，只换挡位（`agent_name` 参数）；真要换引擎，worker 也留着旧调用方式的回退通道。
+
 ### 5.9.1 扩展 ThreadState
 
 ```python
@@ -1011,6 +1047,46 @@ class CustomMiddlewareChain:
             ClarificationMiddleware(),        # 14. 原有
         ]
 ```
+
+> 📌 **怎么写中间件:继承只是"报名",覆写钩子才是"干活"**(上面的 RBACMiddleware、ApprovalMiddleware、AuditLoggerMiddleware 就按这个模板写):
+>
+> **① 前提**:继承 `AgentMiddleware` 只是"报名",真正起作用的是你覆写了哪些"钩子方法"。基类所有钩子都是空实现(透传);LangGraph 编译时逐个检查——你覆写了哪个,哪个位置才生效。一个钩子都不覆写的中间件 = 白报名,编译后连节点都不会生成。
+>
+> **② 六个钩子 = 六个"执行插槽",想干什么覆写哪个**:
+>
+> | 你想要的 | 覆写 | 在哪执行 | 真实范本 |
+> |---|---|---|---|
+> | 模型调用前改状态(注入提醒/校验输入) | `before_model(state, runtime) -> dict \| None` | before_model 段,每轮循环入口 | TodoMiddleware(读 state["todos"],返回 {"messages": [提醒]}) |
+> | 模型调用后收尾(生成标题/记 token) | `after_model(state, runtime) -> dict \| None` | after_model 段,每轮逆序 | TitleMiddleware(返回标题更新) |
+> | 对话开始时初始化(建目录/拿沙箱) | `before_agent(state)` | before_agent 段,首轮一次 | ThreadDataMiddleware |
+> | 对话结束时清理(写记忆) | `after_agent(state)` | after_agent 段,末轮一次 | MemoryMiddleware |
+> | 包住模型调用(重试/消毒) | `wrap_model_call(request, handler)` | model 节点内部洋葱 | LLMErrorHandlingMiddleware |
+> | 包住工具执行(拦截/审计/改结果) | `wrap_tool_call(request, handler)` | tools 节点内部洋葱 | GuardrailMiddleware |
+>
+> 注意签名规律:**返回 `dict` = 往状态里写更新;返回 `None` = 啥也不改**;`wrap_*` 的 `handler` = "里面那层 + 真正干活",不调 handler 就拦截成功了。
+>
+> **③ 从零写一个(模板)**:
+>
+> ```python
+> class MyAuditMiddleware(AgentMiddleware):
+>     """示例:①每轮模型调用前记录消息数;②拦截危险工具。"""
+>
+>     def before_model(self, state, runtime) -> dict | None:
+>         n = len(state.get("messages", []))
+>         print(f"[我的中间件] 本轮开始时已有 {n} 条消息")
+>         return None                      # 只观察,不改状态
+>
+>     def wrap_tool_call(self, request, handler):
+>         if request.tool_call.get("name") == "bash" and "rm -rf" in str(request.tool_call.get("args", {})):
+>             return ToolMessage(content="拦截:禁止 rm -rf", tool_call_id=request.tool_call["id"])
+>         return handler(request)          # 放行:调用里面真正执行
+> ```
+>
+> **④ 它到底在哪执行?**:`before_model` 编译时被挂到 before_model 段的一个图节点上;`wrap_tool_call` 包在 tools 节点内部。图跑起来时,LangGraph 按 5.4 那张图的顺序自动调用它们——执行时机由钩子名决定,挂载位置由编译器决定,**你的代码里没有任何手动调用的地方**。
+>
+> **⑤ 怎么让它生效(三种方式)**:① 改代码:`build_middlewares(custom_middlewares=[MyAuditMiddleware()])`(插到 ClarificationMiddleware 之前);② 用客户端:`DeerFlowClient(middlewares=[...])`;③ 做成扩展:通过 `deerflow_extension_api` 的 `MiddlewareContributor.contribute_middlewares` + `MiddlewarePlacement` 声明位置(第三方插件官方路径,不用 fork 代码)。
+>
+> **一句话总结**:继承 = 报名,覆写钩子 = 干活,钩子名 = 执行时机,编译器 = 自动挂载;你只管写"想做的事",不用管"在哪调用"。
 
 ### 5.9.3 自定义 Agent 工厂
 
