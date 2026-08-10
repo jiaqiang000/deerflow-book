@@ -20,7 +20,7 @@ DeerFlow 的 Agent 核心入口是一个工厂函数：
 from deerflow.agents import make_lead_agent
 
 agent = make_lead_agent(config)
-```python
+```
 
 这个函数完成：
 1. 动态模型选择（支持 thinking / vision）
@@ -189,6 +189,78 @@ async def run_agent():
 └─────────────────────────────────────────────────────────────┘
 ```
 
+> ---
+> 📌 **更详细版本:5.4 的编译后真实结构(修正补充)**
+>
+> 书 5.4 顶部 ASCII 图、5.4.1 的三节点表、5.4.2 的 should_continue,是**同一张真实图的三个逻辑侧面**。DeerFlow 并不手写 StateGraph,而是把 `create_agent(model, tools, middleware=…)`(`agent.py:907`)交给 LangChain 1.x 编译,产物如下:
+>
+> ```text
+> START
+>   │
+>   ▼
+> 【before_agent 段 · 首轮一次】图节点,顺序执行
+>   ThreadData → Uploads → Sandbox → ToolProgress* → DynamicContext
+>   → Todo*(plan) → LoopDetection* → TokenBudget* → TerminalResponse
+>   │
+>   ▼  ← 循环入口 loop_entry(每轮从这里重新开始)
+> 【before_model 段 · 每轮】图节点,顺序执行
+>   DurableContext → Summarization* → Todo* → ViewImage*(vision) → McpRouting*
+>   │
+>   ▼
+> ┌────────────────────────────────────────────────┐
+> │ model 节点(≈5.4.1 的 model_llm)                 │
+> │   内部洋葱 wrap_model_call(运行时,外→内):       │
+> │   InputSanitization → ToolOutputBudget → …     │
+> │   → TerminalResponse → 【调 LLM】               │
+> └────────────────────────────────────────────────┘
+>   │
+>   ▼
+> 【after_model 段 · 每轮,逆序执行】图节点
+>   SafetyFinishReason* → … → Title → … → DurableContext
+>   │   └─ 链尾挂 条件边A
+>   ▼  条件边A: 最后一条 AI 消息有未执行 tool_calls?
+>   │       (≈5.4.2 的 should_continue,判定优先级: jump_to → 无AI消息
+>   │        → 无tool_calls→退出 → 有pending→并行Send → 人工注入→回model)
+>   │
+>   ├─ 无 ──► 【after_agent 段 · 末轮一次,逆序】
+>   │         TerminalResponse → … → Memory → … → Sandbox ──► END
+>   │
+>   └─ 有 ──► ┌────────────────────────────────────────────────┐
+>             │ tools 节点(≈5.4.1 的 tools)                    │
+>             │   并行 Send;内部洋葱 wrap_tool_call(外→内):     │
+>             │   ToolOutputBudget → … → Clarification →【执行】│
+>             └────────────────────────────────────────────────┘
+>                 │
+>                 ▼  条件边B
+>                 ├─ 默认 ──► 回 loop_entry(重跑 before_model 段)──► 循环
+>                 └─ 全部 return_direct ──► after_agent 段 ──► END
+> ```
+>
+> **① 5.4.1 三节点 ↔ 真实挂载位**
+>
+> | 5.4.1 逻辑节点 | 真实编译产物 |
+> |---|---|
+> | `middleware_chain` | 拆成 4 段钩子节点链(before_agent / before_model / after_model / after_agent)+ 2 层运行时洋葱(wrap_model_call / wrap_tool_call,画在节点内部) |
+> | `model_llm` | `model` 节点 |
+> | `tools` | `tools` 节点(ToolNode) |
+>
+> **② 5.4.2 should_continue ↔ 条件边A**(语义相同,三处差异)
+>
+> | 5.4.2 | 真实实现 |
+> |---|---|
+> | 挂在 model_llm 直出 | 挂在 **after_model 链尾**(中间件改完消息才判定) |
+> | 两分支 | 5 分支(见图中注释),工具用 `Send` **并行**执行 |
+> | 回"model" | 回 **loop_entry**(第一个 before_model 节点),工具永远不直连 END |
+>
+> **③ 相对 5.4 原文的修正点**
+> 1. 中间件**真实存在**(共 31 个 `AgentMiddleware` 子类),只是不是图上那一个盒子:每个中间件的钩子会被拆成多个小节点,围在 model 和 tools 周围——上面图里各段列的名字就是它们;
+> 2. `tools ──→ END` 直连不存在,工具执行完必回模型再决策;
+> 3. 5.5 的 `Middleware.process()` 接口是虚构的,真实靠 6 类钩子工作(如 ClarificationMiddleware 用 `wrap_tool_call` 拦截澄清请求并中断,等待用户回复)。
+>
+> **洋葱一句话**:`wrap_model_call/wrap_tool_call` = 运行时"函数套函数",`handler` 代表里面所有层加核心调用,列表第一个=最外层(`middleware/types.py:671`),去程回程都经过每层,故能双向处理(消毒/重试/拦截/审计)。
+>
+> ---
+
 ### 5.4.1 节点定义
 
 DeerFlow 的核心节点：
@@ -228,6 +300,8 @@ workflow.add_conditional_edges(
     }
 )
 ```
+
+> ⚠️ **勘误:5.4.2 的代码只是示意,不是 DeerFlow 的真实代码**——它是照着 LangGraph 官方教程的通用画法写的,用来表达"模型没调用工具就结束,调用了就继续执行"这个循环。DeerFlow 实际直接用 LangChain 现成的 `create_agent` 工厂拼出循环,真实结构见 5.4 下方【更详细版本】框。
 
 ## 5.5 中间件链（Middleware Chain）
 
@@ -286,7 +360,7 @@ class Middleware(ABC):
         返回：continue（继续）/ suspend（暂停）/ interrupt（中断）
         """
         raise NotImplementedError
-```python
+```
 
 ### 5.5.3 核心中间件详解
 
@@ -340,7 +414,7 @@ class SandboxMiddleware:
         }
         
         return MiddlewareResult(should_should_continue=True)
-```python
+```
 
 #### GuardrailMiddleware
 
@@ -401,7 +475,7 @@ class SummarizationMiddleware:
             )
         
         return MiddlewareResult(should_should_continue=True)
-```python
+```
 
 #### ClarificationMiddleware
 
@@ -453,7 +527,7 @@ class ToolErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         except Exception as exc:
             # 构建错误 ToolMessage，让 Agent 可以继续执行
             return self._build_error_message(request, exc)
-```python
+```
 
 **功能：**
 - 捕获工具执行异常，避免整个 Agent 运行中断
@@ -507,7 +581,7 @@ class TokenUsageMiddleware(AgentMiddleware):
                 usage.get("output_tokens", "?"),
                 usage.get("total_tokens", "?"),
             )
-```python
+```
 
 **功能：**
 - 在 `after_model` 钩子中记录 Token 使用量
@@ -908,7 +982,7 @@ class CustomThreadState(ThreadState):
     user_role: Optional[str]         # 用户角色
     approval_queue: List[Approval]  # 待审批队列
     audit_context: AuditContext     # 审计上下文
-```python
+```
 
 ### 5.9.2 添加企业中间件
 
