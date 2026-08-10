@@ -159,6 +159,19 @@ async def run_agent():
     result = await agent.ainvoke(input, config=config)
 ```
 
+> **关键理解：configurable 不是配置文件，而是"每次调用时传的参数包"（一个字典）**
+>
+> 它的值按优先级来自三层：
+>
+> 1. **每次调用显式传参**（最高）：`client.chat("你好", model_name="gpt-4o")`
+> 2. **创建客户端时的默认**（其次）：`DeerFlowClient(model_name=..., thinking_enabled=...)`，存于 `self._model_name` 等属性
+> 3. **config.yaml 默认值**（兜底）
+>
+> 代码本质：`configurable["model_name"] = overrides.get("model_name", self._model_name)`（client.py:243）；
+> Agent 端 `_get_runtime_config` 从 `config["configurable"]` 读取（agent.py:119）。
+>
+> **一句话：调用方每次把想要的参数装进这个字典，盖过默认值；不装就用默认（config.yaml）。**
+
 ## 5.4 LangGraph 工作流结构
 
 > **⚠️ 注意**：自定义 State 的字段命名需避免与 LangGraph 内置字段冲突（如 `messages`、`is_last_step`），否则会导致不可预期的状态覆盖问题。
@@ -174,6 +187,7 @@ async def run_agent():
 │                        └──────────────────┘
 │                           (循环直到完成)
 └─────────────────────────────────────────────────────────────┘
+```
 
 ### 5.4.1 节点定义
 
