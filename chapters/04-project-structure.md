@@ -127,13 +127,13 @@ deer-flow/
 #    → 删除 thread state
 # 2. Gateway routers/threads.py
 #    → 通过 Paths.delete_thread_dir() 清理文件系统数据
-```python
+```
 
 ### 4.2.2 Agents (`backend/packages/harness/deerflow/agents/`)
 
 **职责：** LangGraph Agent 运行时核心。
 
-**入口：** `packages/harness/deerflow/agents/lead_agent/agent.py:make_lead_agent`
+**入口：** `backend/packages/harness/deerflow/agents/lead_agent/agent.py:make_lead_agent`
 
 **核心组件：**
 ```
@@ -165,14 +165,36 @@ subagents/
 
 ```
 skills/
-├── loader.py            # Skill 加载器
-├── parser.py            # SKILL.md 解析
-├── manager.py           # Skill 管理
-├── installer.py         # Skill 安装
-├── validation.py        # Skill 校验
-├── security_scanner.py  # 安全扫描
-└── types.py             # 类型定义
+├── storage/            # Skill 存储（磁盘读写、用户隔离、启用状态）
+├── installer.py        # Skill 安装（.skill 归档）
+├── parser.py           # SKILL.md 解析
+├── validation.py       # Skill 校验
+├── security_scanner.py # 安全扫描
+├── security_static_scanner.py  # 静态安全扫描
+├── describe.py         # describe_skill 工具（模型侧技能发现）
+├── slash.py            # /skill-name 斜杠指令解析
+├── catalog.py          # SkillCatalog（技能目录）
+├── types.py            # 类型定义
+└── projection.py / tool_policy.py / permissions.py / review/ / skillscan/ …
 ```
+
+> **💡 技能 = 一个 SKILL.md 文件,skills/ = 管理它的系统**
+>
+> 上面的文件都不是"技能本身"——一个技能就是一个目录里的 `SKILL.md`(frontmatter 元数据 + markdown 正文)。那些 `.py` 文件是管理技能的基础设施,就像图书馆的编目、入库、安检、检索台,与技能数量无关。
+>
+> 这些文件是怎么串起来工作的?以 `academic-paper-review` 为例,一个技能从被写出来到被模型实际使用,依次经过：
+>
+> ```
+> 你写 SKILL.md（内容）
+>    ↓ installer.py 装进 skills/public/ 或 custom/
+>    ↓ parser.py 读出 frontmatter → validation.py 校验格式
+>    ↓ security_scanner.py 安检（不过关就拒绝）
+>    ↓ storage/ 入库，登记启用状态
+>    ↓ catalog.py 建目录索引
+>    ↓ 启动时 describe.py 把"名字索引"渲染进系统提示词
+>    ↓ 用户输入 /academic-paper-review 或模型调 describe_skill()
+>    ↓ 技能被激活 → tool_policy.py 放行它允许的工具
+> ```
 
 ### 4.2.4 Sandbox (`backend/packages/harness/deerflow/sandbox/`)
 
@@ -207,7 +229,7 @@ frontend/
 │   └── lib/             # 通用工具
 ├── tests/               # 前端测试
 └── public/              # 静态资源
-```bash
+```
 
 ## 4.4 开发命令
 
