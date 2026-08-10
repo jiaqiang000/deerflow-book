@@ -233,18 +233,23 @@ frontend/
 
 ## 4.4 开发命令
 
+"开发命令" = 开发者日常要用的命令（普通用户不需要碰），分两类：**启动**（怎么把服务跑起来）和**提交前检查**（写完代码后保证质量）。
+
+### 启动
+
 ```bash
-# 后端测试
-cd backend
-uv run pytest
+make dev                  # 一键启动整套开发栈（Gateway + 前端 + Nginx，带热重载）
+cd backend && make dev    # 只启动后端 Gateway（8001）
+cd frontend && pnpm dev   # 只启动前端（3000）
+```
 
-# 前端检查
-cd frontend
-pnpm check
+### 提交前检查（写完代码依次跑）
 
-# 格式化
-cd backend && make format    # ruff
-cd frontend && pnpm format:write  # prettier
+```bash
+cd backend && uv run pytest          # ① 后端测试
+cd frontend && pnpm check            # ② 前端 lint + 类型检查
+cd backend && make format            # ③ 后端格式化（ruff）
+cd frontend && pnpm format:write     # ④ 前端格式化（prettier）
 ```
 
 ## 4.5 配置体系
@@ -281,6 +286,14 @@ sandbox:
 | **Middleware** | `backend/packages/harness/deerflow/agents/middlewares/` | 添加审批、检查逻辑 |
 | **Memory** | `backend/packages/harness/deerflow/agents/memory/` | JSON profile/facts、LLM 更新、自定义 `MemoryStorage` |
 | **Channel** | `backend/app/channels/` 与 `backend/app/gateway/routers/channels.py` | 企业 IM 集成 |
+
+> 🔍 **自行探索发现的三处扩展点**(上表之外,代码里同样开放):
+>
+> | 扩展点 | 位置 | 说明 |
+> |--------|------|------|
+> | **自定义工具** | `backend/packages/harness/deerflow/community/` + `config.yaml` 的 `tools:` 段 | 写一个 `@tool` 函数 + 配置一行,即可让模型调用内部 API;`community/` 下已有 22 个现成供应商可参考,加载机制是 `deerflow/reflection/resolvers.py` 的 `module:variable` 动态解析 |
+> | **MCP Server** | `extensions_config.json` 的 `mcpServers` | 零代码接入现成生态(数据库、GitHub、文件系统等),支持关键词路由;与"自定义工具"的分工:不写代码用 MCP,深度定制写工具 |
+> | **插件系统** | `backend/packages/extension-api/deerflow_extension_api/` + `config.yaml` 的 `plugins:` 列表 | 官方插件通道:把中间件、Agent 构建钩子、运行时状态打包分发,不改源码、可跨团队复用;`extensions_config.json` 的 `middlewares` / `mcpInterceptors` 数组也是为插件准备的 |
 
 ## 4.7 小结
 

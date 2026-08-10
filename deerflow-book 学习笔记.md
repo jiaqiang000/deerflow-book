@@ -23,6 +23,12 @@ tags:
 - 知识主线:待补充
 
 ---
+## 易混复杂重点知识
+[[03-architecture#3.6 请求处理流程]]
+
+[[04-project-structure#4.1 整体目录结构]]
+
+[[05-agent-core]]
 
 ## 第一章 引言:什么是 DeerFlow
 
