@@ -403,7 +403,15 @@ models:
 sandbox:
   use: deerflow.community.aio_sandbox:AioSandboxProvider
   provisioner_url: https://...
+
+tools:
+  - name: web_search
+    group: web
+    use: deerflow.community.ddg_search.tools:web_search_tool
+    max_results: 5
 ```
+
+> **工具配置**：`tools:` 段定义 agent 可用的全部工具（沙箱、社区、自定义），每个条目通过 `use: 模块路径:变量` 反射加载；自定义工具只需写一个 `@tool` 函数并在此注册即可。完整机制见 [[05-agent-core#5.6 工具系统（Tools）]]。
 
 ### extensions_config.json
 扩展配置文件，管理 MCP Servers 和 Skills。

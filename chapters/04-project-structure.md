@@ -265,7 +265,14 @@ models:
 
 sandbox:
   use: deerflow.community.aio_sandbox:AioSandboxProvider
+
+tools:
+  - name: web_search
+    group: web
+    use: deerflow.community.ddg_search.tools:web_search_tool
 ```
+
+> **工具配置**：`tools:` 段注册 agent 可用的全部工具，`use:` 指向工具函数（反射加载），自定义工具在此登记。详见 [[05-agent-core#5.6 工具系统（Tools）]]。
 
 ### extensions_config.json - 扩展配置
 ```text

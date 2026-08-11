@@ -255,7 +255,7 @@ DeerFlow 渐进式加载体系
 ├─ 2. Skill 层
 │   │
 │   ├─ 第一步：扫描 Skill（无论是否开启延迟，都会执行）
-│   │   ├─ 扫描磁盘上的全部 SKILL.md
+│   │   ├─ 扫描磁盘上的全部 SKILL.md（系统自带的 20+ 个内置 Skill 同样在此被扫描——默认全部启用、元数据进入提示词，但正文不会全部强行加入上下文，AI 需要时才 read_file 按需加载）
 │   │   ├─ 读取文件并解析 frontmatter 元数据
 │   │   │     —— name / description / allowed-tools / 路径等
 │   │   └─ 合并 enabled 状态和 agent 白名单
@@ -979,6 +979,31 @@ print(result)
 
 ## 6.8 Skill 与 Tool 的绑定
 
+> **Skill 与 Tool 的真实关系（基于代码）**
+>
+> 1. **Skill 和 Tool 是两套独立的东西**：工具由 `get_available_tools()` 从配置加载，skill 由 `SkillStorage` 扫描——互不相关。
+> 2. **Skill 唯一的"绑定"**：skill 的 SKILL.md 里可以**可选地**写一行 `allowed-tools: [工具名...]`，声明"我干活只需要这些工具"。
+> 3. **这个声明什么时候生效**：skill 被**激活**时（slash 点名，或 AI 把 SKILL.md 读进上下文），系统就把当前工具集**收窄**为"声明清单 + 4 个保底工具"（read_file / describe_skill / tool_search / review_skill_package）。没激活，或激活的 skill 没写声明 → **什么都不限制**。
+>
+> **完整流程（5 步）**：
+> ① Skill 写声明（可选）：SKILL.md 里写 `allowed-tools: [bash, read_file]`
+> ② Skill 被激活：用户 /skill 点名 或 AI read_file 读入 skill_context
+> ③ 系统算名单：名单 = 所有激活 skill 的声明合并 + 4 个保底工具
+>    └─ 没有任何激活 skill 写过声明 → 跳过全部，不限制
+> ④ 名单生效：模型只能看到名单内的工具
+> ⑤ 越界拦截：模型调了名单外的工具 → 直接报错拒绝
+>
+> **什么情况限制、什么情况不限制**：
+>
+> | 情况 | 结果 |
+> |------|------|
+> | 没激活任何 skill | 不限制（全部工具可用） |
+> | 激活了，但 skill 没写声明 | 不限制（全部工具可用） |
+> | 激活了，skill 写了声明 | 收窄：只剩声明 + 4 保底 |
+> | 激活了，但声明解析失败/被禁用 | fail-closed：只剩 4 保底 |
+>
+> **注意（全局性）**：名单是 agent 级的、持久累积的——只要激活的 skill 里有一个写了声明，整个 run 的工具集就全局收窄（其他没写声明的 skill 也不贡献工具），且 skill_context 一旦读入就持续生效。所以除非确定不需要其他工具，否则别轻易给 skill 写 allowed-tools。
+
 ### 6.8.1 动态 Tool 创建
 
 ```python
@@ -1042,56 +1067,53 @@ Skill.prepare_context(config)
 
 ## 6.9 内置 Skills
 
-DeerFlow 自带以下 Skills：
+DeerFlow 随仓库提供 **20+ 个内置 Skill**（`skills/public/` 目录，随代码提交）。它们默认全部**启用**（可被发现），但「启用 ≠ 激活」——除非被 slash 点名或被 AI 加载进上下文，否则它们只是可发现，不产生任何权限影响。下面以 3 个典型内置 Skill 为例，展示真实格式：
 
-### 6.9.1 recursive-summarizer（递归摘要）
+### 6.9.1 data-analysis（数据分析）
 
-```yaml
-name: deer-flow-skills/recursive-summarizer
-description: 递归摘要工具，用于压缩长文本
-version: 1.0.0
-
-tools:
-  - name: summarize
-    config:
-      max_tokens: 2000
-      compression_ratio: 0.5
-```
-
-**用途：** 当 context 超过限制时，递归压缩对话历史
-
-### 6.9.2 quick-searcher（快速搜索）
+`skills/public/data-analysis/SKILL.md` 的 frontmatter：
 
 ```yaml
-name: deer-flow-skills/quick-searcher
-description: 快速搜索工具
-version: 1.0.0
-
-tools:
-  - name: search
-    config:
-      max_results: 5
-      include_snippets: true
+---
+name: data-analysis
+description: Use this skill when the user uploads Excel (.xlsx/.xls) or CSV files and wants to perform data analysis, generate statistics, create summaries, pivot tables, SQL queries...
+---
 ```
 
-**用途：** 快速获取搜索结果，用于信息收集
+**用途：** 用 DuckDB 对上传的 Excel/CSV 做 SQL 查询、统计汇总、结果导出。
 
-### 6.9.3 in-depth-researcher（深度研究）
+### 6.9.2 deep-research（深度研究）
+
+`skills/public/deep-research/SKILL.md` 的 frontmatter：
 
 ```yaml
-name: deer-flow-skills/in-depth-researcher
-description: 深度研究工具，支持多轮搜索和分析
-version: 1.0.0
-
-tools:
-  - name: research
-    config:
-      max_iterations: 5
-      follow_depth: 3
-      synthesis: true
+---
+name: deep-research
+description: Use this skill instead of WebSearch for ANY question requiring web research. Provides systematic multi-angle research methodology...
+---
 ```
 
-**用途：** 复杂研究任务，多角度分析
+**用途：** 系统性多角度联网研究的方法论，替代单次浅层搜索，在内容生成任务前加载。
+
+### 6.9.3 skill-creator（Skill 创建器）
+
+`skills/public/skill-creator/SKILL.md` 的 frontmatter：
+
+```yaml
+---
+name: skill-creator
+description: 指导如何创建规范的自定义 Skill ...
+---
+```
+
+**用途：** 引导 AI 按官方规范创建/更新自定义 Skill（含 allowed-tools 语法校验）。
+
+### 6.9.4 内置 Skill 与 allowed-tools 的关系（衔接 6.8）
+
+- **真实格式**：内置 Skill 的 frontmatter 只有 `name` + `description`，**不存在 `tools:` 字段**，也不声明 `allowed-tools`——它们不限制工具，全部工具照常可用。
+- **`allowed-tools` 是可选的权限声明**：只有 skill 作者主动在 frontmatter 里写 `allowed-tools: [...]`，该声明才会在 skill **激活**后生效，把工具集收窄为「声明清单 + 4 个框架基础工具」——这正是 6.8 讲的「Skill 与 Tool 的授权绑定」关系（准确机制以 6.4 引用框第 4、5 部分为准）。
+- **启用 ≠ 激活**：20+ 个内置 Skill 默认全启用，但未激活时权限策略不介入；只有 slash 点名或 AI `read_file` 加载后，声明（若有）才生效。
+- **结论**：内置 Skill 均未使用 allowed-tools，因此默认部署下对工具权限**零影响**；allowed-tools 是 skill 作者可选的"锁门"手段，与 6.8 的授权绑定是同一机制。
 
 ## 6.10 Skill 安装与更新
 
@@ -1341,7 +1363,7 @@ class DocumentReviewSkill:
                 ))
         
         return issues
-```python
+```
 
 ### 6.12.3 Skill 注册
 
